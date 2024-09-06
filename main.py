@@ -1,5 +1,6 @@
 import logging
 import discord
+
 from discord.ext import commands
 import asyncio
 import aiohttp
@@ -60,22 +61,29 @@ def tool(name: str, description: str):
             "param_types": param_types,
         }
 
+
         logger.debug(f"Registered tool: {name} with parameters {param_names} and types {param_types}")
+        logger.info(f"Registered tool: {name}")
         return func
     return decorator
 
 # Define tool functions using the @tool decorator
 @tool(name="sum", description="Calculates the sum of two numbers. Usage: sum(a, b) where a and b are numbers.")
 async def sum_numbers(a: float, b: float) -> float:
+
     logger.debug(f"Executing sum_numbers with a={a}, b={b}")
+
     return a + b
 
 @tool(name="squareRoot", description="Calculates the square root of a number. Usage: squareRoot(x) where x is a non-negative number.")
 async def square_root(x: float) -> float:
+
     logger.debug(f"Executing square_root with x={x}")
+
     if x < 0:
         raise ValueError("Cannot calculate square root of a negative number")
     return x ** 0.5
+
 
 @tool(name="create_channel", description="Creates a new channel in the server. Usage: create_channel(guild_id, channel_name, channel_type='text')")
 async def create_channel(guild_id: int, channel_name: str, channel_type: str = 'text') -> str:
@@ -197,6 +205,23 @@ async def generate_image_ideogram(prompt: str, resolution: str = "RESOLUTION_102
         }
     }
 
+# Asynchronous function to interact with OpenRouter API
+async def get_openrouter_response(conversation: List[Dict[str, str]]):
+    url = "https://openrouter.ai/api/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
+        "HTTP-Referer": YOUR_SITE_URL,
+        "X-Title": YOUR_APP_NAME,
+        "Content-Type": "application/json",
+    }
+    system_prompt = generate_system_prompt()
+    data = {
+        "model": "nousresearch/hermes-3-llama-3.1-405b",
+        "messages": [{"role": "system", "content": system_prompt}] + conversation,
+        "min_p": 0.1,
+        "temperature": 1.1
+    }
+
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, json=data) as response:
             if response.status == 200:
@@ -227,6 +252,7 @@ def generate_system_prompt(character: str, tool_package: str) -> str:
     tool_instructions += "\nWhen you need to use a tool, use the exact syntax provided in the tool description. Always show your work by using the tools explicitly in your response."
     return f"You are an AI assistant. Your name is {character}. Do not add your name to messages, it is in the metadata already. Users have given you an extra system prompt; {prompt}. You are in a group chat with other AIs and humans.{tool_instructions}"
 
+
 # Function to extract tool and parameters from the text based on registered tools
 def extract_tool_and_params(text: str) -> Tuple[str, Tuple]:
     tool_pattern = r"(\w+)\(([^)]*)\)"
@@ -250,6 +276,7 @@ def extract_tool_and_params(text: str) -> Tuple[str, Tuple]:
                     logger.error(f"Invalid parameter type for {param}. Expected {param_type}.")
                     raise Exception(f"Invalid parameter type for {param}. Expected {param_type}.")
             
+
             logger.debug(f"Extracted parameters for {tool_name}: {converted_params}")
             return tool_name, tuple(converted_params)
     return "", ()
@@ -599,6 +626,7 @@ async def generate_image_command(
 TOOL_PACKAGES["default"].add("generate_image")
 TOOL_PACKAGES["image_generation"] = {"generate_image"}
 # Updated event listener for when a message is received
+
 @bot.event
 async def on_message(message):
     if message.author == bot.user:
@@ -610,5 +638,5 @@ async def on_message(message):
 
     await bot.process_commands(message)
 
-# Start the bot
+#start the bot
 bot.run(DISCORD_TOKEN)
