@@ -1,0 +1,20 @@
+# Ignore character profiles file
+character_profiles.json
+
+# Ignore virtual environment directory
+/myenv/
+
+# Python-related ignores
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment variables
+.env
+
+# IDE-specific files (optional, but often useful)
+.vscode/
+.idea/
+
+# Logs
+*.log
