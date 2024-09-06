@@ -8,16 +8,13 @@ import json
 from collections import deque
 from typing import Callable, Dict, Tuple, Any, List, get_type_hints
 import re
+from discord.errors import Forbidden, HTTPException
 
 # Setup logger
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
 
 # Replace with your OpenRouter API Key and other necessary constants
-OPENROUTER_API_KEY = ""
-YOUR_SITE_URL = "https://yourwebsite.com"
-YOUR_APP_NAME = "Hermes"
-DISCORD_TOKEN = ""
 
 # File to store character profiles
 CHARACTER_PROFILES_FILE = "character_profiles.json"
@@ -80,10 +77,145 @@ async def square_root(x: float) -> float:
         raise ValueError("Cannot calculate square root of a negative number")
     return x ** 0.5
 
+@tool(name="create_channel", description="Creates a new channel in the server. Usage: create_channel(guild_id, channel_name, channel_type='text')")
+async def create_channel(guild_id: int, channel_name: str, channel_type: str = 'text') -> str:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        raise ValueError(f"Guild with ID {guild_id} not found")
+    
+    channel_type_enum = discord.ChannelType.text if channel_type == 'text' else discord.ChannelType.voice
+    try:
+        new_channel = await guild.create_text_channel(channel_name) if channel_type == 'text' else await guild.create_voice_channel(channel_name)
+        return f"Channel '{new_channel.name}' created successfully with ID {new_channel.id}"
+    except Forbidden:
+        return "Bot doesn't have the required permissions to create a channel"
+    except HTTPException:
+        return "An error occurred while creating the channel"
+
+@tool(name="list_channels", description="Lists all channels in the server. Usage: list_channels(guild_id)")
+async def list_channels(guild_id: int) -> str:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        raise ValueError(f"Guild with ID {guild_id} not found")
+    
+    channels = [f"{channel.name} (ID: {channel.id}, Type: {channel.type})" for channel in guild.channels]
+    return "\n".join(channels)
+
+@tool(name="create_role", description="Creates a new role in the server. Usage: create_role(guild_id, role_name, color_hex='#000000')")
+async def create_role(guild_id: int, role_name: str, color_hex: str = '#000000') -> str:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        raise ValueError(f"Guild with ID {guild_id} not found")
+    
+    try:
+        color = discord.Colour(int(color_hex.lstrip('#'), 16))
+        new_role = await guild.create_role(name=role_name, colour=color)
+        return f"Role '{new_role.name}' created successfully with ID {new_role.id}"
+    except Forbidden:
+        return "Bot doesn't have the required permissions to create a role"
+    except HTTPException:
+        return "An error occurred while creating the role"
+
+@tool(name="list_roles", description="Lists all roles in the server. Usage: list_roles(guild_id)")
+async def list_roles(guild_id: int) -> str:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        raise ValueError(f"Guild with ID {guild_id} not found")
+    
+    roles = [f"{role.name} (ID: {role.id})" for role in guild.roles]
+    return "\n".join(roles)
+
+@tool(name="add_role_to_member", description="Adds a role to a member. Usage: add_role_to_member(guild_id, member_id, role_id)")
+async def add_role_to_member(guild_id: int, member_id: int, role_id: int) -> str:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        raise ValueError(f"Guild with ID {guild_id} not found")
+    
+    member = guild.get_member(member_id)
+    if not member:
+        return f"Member with ID {member_id} not found in the server"
+    
+    role = guild.get_role(role_id)
+    if not role:
+        return f"Role with ID {role_id} not found in the server"
+    
+    try:
+        await member.add_roles(role)
+        return f"Role '{role.name}' added to member '{member.name}' successfully"
+    except Forbidden:
+        return "Bot doesn't have the required permissions to add roles"
+    except HTTPException:
+        return "An error occurred while adding the role"
+
+@tool(name="remove_role_from_member", description="Removes a role from a member. Usage: remove_role_from_member(guild_id, member_id, role_id)")
+async def remove_role_from_member(guild_id: int, member_id: int, role_id: int) -> str:
+    guild = bot.get_guild(guild_id)
+    if not guild:
+        raise ValueError(f"Guild with ID {guild_id} not found")
+    
+    member = guild.get_member(member_id)
+    if not member:
+        return f"Member with ID {member_id} not found in the server"
+    
+    role = guild.get_role(role_id)
+    if not role:
+        return f"Role with ID {role_id} not found in the server"
+    
+    try:
+        await member.remove_roles(role)
+        return f"Role '{role.name}' removed from member '{member.name}' successfully"
+    except Forbidden:
+        return "Bot doesn't have the required permissions to remove roles"
+    except HTTPException:
+        return "An error occurred while removing the role"
+
 # New dictionary to store tool packages
 TOOL_PACKAGES = {
     "default": set(TOOL_REGISTRY.keys())
 }
+
+# Update the TOOL_PACKAGES dictionary to include these new tools
+TOOL_PACKAGES["discord_management"] = {
+    "create_channel", "list_channels", "create_role", "list_roles",
+    "add_role_to_member", "remove_role_from_member"
+}
+
+
+# New function to generate image using Ideogram API
+async def generate_image_ideogram(prompt: str, resolution: str = "1024x1024"):
+    url = "https://api.ideogram.ai/generate"
+    headers = {
+        "Api-Key": IDEOGRAM_API_KEY,
+        "Content-Type": "application/json"
+    }
+    data = {
+        "image_request": {
+            "prompt": prompt,
+            "resolution": resolution,
+            "model": "V_2",
+            "magic_prompt_option": "AUTO"
+        }
+    }
+
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, json=data) as response:
+            if response.status == 200:
+                response_json = await response.json()
+                image_url = response_json['data'][0]['url']
+                return image_url
+            else:
+                error_message = await response.text()
+                logger.error(f"Error from Ideogram: {response.status} - {error_message}")
+                raise Exception(f"Error from Ideogram: {response.status} - {error_message}")
+
+# Add the generate_image_ideogram function as a tool
+@tool(name="generate_image", description="Generates an image based on a prompt. Usage: generate_image(prompt, resolution='1024x1024')")
+async def generate_image_tool(prompt: str, resolution: str = "1024x1024") -> str:
+    try:
+        image_url = await generate_image_ideogram(prompt, resolution)
+        return f"Image generated successfully. URL: {image_url}"
+    except Exception as e:
+        return f"Error generating image: {str(e)}"
 
 # Function to generate system prompt instructions for the AI
 def generate_system_prompt(character: str, tool_package: str) -> str:
@@ -440,6 +572,32 @@ async def aihelp(ctx):
 async def on_ready():
     logger.info(f"We have logged in as {bot.user}")
 
+# New slash command to generate an image
+@bot.slash_command(name="generate_image", description="Generate an image using Ideogram")
+async def generate_image_command(
+    ctx, 
+    prompt: str, 
+    resolution: str = discord.Option(
+        str, 
+        choices=["1024x1024", "1024x1792", "1792x1024"], 
+        default="1024x1024"
+    )
+):
+    await ctx.defer()  # Defer the response as image generation might take some time
+    try:
+        image_url = await generate_image_ideogram(prompt, resolution)
+        
+        # Create an embed with the image
+        embed = discord.Embed(title="Generated Image", description=prompt)
+        embed.set_image(url=image_url)
+        
+        await ctx.respond(embed=embed)
+    except Exception as e:
+        await ctx.respond(f"Error generating image: {str(e)}")
+
+# Update the TOOL_PACKAGES dictionary to include the new tool
+TOOL_PACKAGES["default"].add("generate_image")
+TOOL_PACKAGES["image_generation"] = {"generate_image"}
 # Updated event listener for when a message is received
 @bot.event
 async def on_message(message):
