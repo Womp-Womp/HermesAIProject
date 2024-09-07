@@ -16,7 +16,14 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 # Replace with your OpenRouter API Key and other necessary constants
+AI_MODELS = {
+    "hermes": "nousresearch/hermes-3-llama-3.1-405b",
+    "claude": "anthropic/claude-3-opus-20240229",
+    "gpt4": "openai/gpt-4-turbo-preview",
+}
 
+# Default model
+DEFAULT_MODEL = "hermes"
 # File to store character profiles
 CHARACTER_PROFILES_FILE = "character_profiles.json"
 
@@ -206,7 +213,7 @@ async def generate_image_ideogram(prompt: str, resolution: str = "RESOLUTION_102
     }
 
 # Asynchronous function to interact with OpenRouter API
-async def get_openrouter_response(conversation: List[Dict[str, str]]):
+async def get_openrouter_response(conversation, system_prompt, model):
     url = "https://openrouter.ai/api/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -214,14 +221,12 @@ async def get_openrouter_response(conversation: List[Dict[str, str]]):
         "X-Title": YOUR_APP_NAME,
         "Content-Type": "application/json",
     }
-    system_prompt = generate_system_prompt()
     data = {
-        "model": "nousresearch/hermes-3-llama-3.1-405b",
+        "model": AI_MODELS[model],
         "messages": [{"role": "system", "content": system_prompt}] + conversation,
-        "min_p": 0.1,
-        "temperature": 1.1
+        #"min_p": 0.1, MIN P DIE SO CLAUDE COULD FLY
+        #"temperature": 1.15 NEVER USE TEMPERATURE LIKE THIS WITHOUT MIN P
     }
-
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, json=data) as response:
             if response.status == 200:
@@ -347,13 +352,15 @@ async def manage_conversation(channel_id, character):
                 return None
 
     system_prompt = thread_data['system_prompt']
+    model = thread_data['model']
     full_conversation = conversation  # No need to add system prompt here
 
     # limit conversation to first 5
     if len(full_conversation) > 5:
         full_conversation = full_conversation[-5:]
     
-    response = await get_openrouter_response(full_conversation, system_prompt)
+    response = await get_openrouter_response(full_conversation, system_prompt, model)
+     
     choices = response.get("choices", [])
     
     if not choices:
@@ -429,7 +436,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Updated slash command to start an AI thread
 @bot.slash_command(name="start_ai", description="Start an AI thread for a specific character in a channel")
-async def start_ai(ctx, character: str, channel: discord.Option(discord.TextChannel, description="The channel to start the AI thread in"), tool_package: str = "default"):
+async def start_ai(ctx, character: str, channel: discord.Option(discord.TextChannel, description="The channel to start the AI thread in"), tool_package: str = "default", model: str = DEFAULT_MODEL):
     if character in CHARACTER_PROFILES:
         if channel.id not in AI_THREADS:
             AI_THREADS[channel.id] = {}
@@ -443,19 +450,23 @@ async def start_ai(ctx, character: str, channel: discord.Option(discord.TextChan
             await ctx.respond(f"Tool package '{tool_package}' does not exist. Using default package.")
             tool_package = "default"
         
+        if model not in AI_MODELS:
+            await ctx.respond(f"Model '{model}' does not exist. Using default model.")
+            model = DEFAULT_MODEL
+        
         system_prompt = generate_system_prompt(character, tool_package)
         task = bot.loop.create_task(monitor_channel(character, channel))
         AI_THREADS[channel.id][character] = {
             'task': task,
             'history': deque(maxlen=MAX_CONVERSATION_LENGTH),
             'system_prompt': system_prompt,
-            'tool_package': tool_package
+            'tool_package': tool_package,
+            'model': model
         }
-        logger.info(f"Started AI thread for {character} in channel {channel.name} with tool package {tool_package}")
-        await ctx.respond(f"AI thread for {character} started in channel {channel.name} with tool package {tool_package}.")
+        logger.info(f"Started AI thread for {character} in channel {channel.name} with tool package {tool_package} and model {model}")
+        await ctx.respond(f"AI thread for {character} started in channel {channel.name} with tool package {tool_package} and model {model}.")
     else:
         await ctx.respond(f"Character '{character}' is not defined. Available characters: {', '.join(CHARACTER_PROFILES.keys())}")
-
 # New slash command to create a tool package
 @bot.slash_command(name="create_tool_package", description="Create a new tool package")
 async def create_tool_package(ctx, package_name: str, tools: str):
@@ -522,7 +533,38 @@ async def list_characters(ctx):
         await ctx.respond(f"Available characters:\n{character_list}")
     else:
         await ctx.respond("No characters have been defined yet.")
+@bot.slash_command(name="load_model", description="Load a new AI model")
+async def load_model(ctx, model_name: str, model_id: str):
+    if model_name in AI_MODELS:
+        await ctx.respond(f"Model '{model_name}' already exists. Use a different name or update the existing model.")
+    else:
+        AI_MODELS[model_name] = model_id
+        await ctx.respond(f"Model '{model_name}' loaded successfully with ID: {model_id}")
 
+@bot.slash_command(name="list_models", description="List all available AI models")
+async def list_models(ctx):
+    model_list = "\n".join([f"- {name}: {model_id}" for name, model_id in AI_MODELS.items()])
+    await ctx.respond(f"Available AI models:\n{model_list}")
+
+@bot.slash_command(name="set_default_model", description="Set the default AI model")
+async def set_default_model(ctx, model_name: str):
+    global DEFAULT_MODEL
+    if model_name in AI_MODELS:
+        DEFAULT_MODEL = model_name
+        await ctx.respond(f"Default model set to '{model_name}'")
+    else:
+        await ctx.respond(f"Model '{model_name}' not found. Use /list_models to see available models.")
+
+@bot.slash_command(name="hotswap_model", description="Change the AI model for an existing thread")
+async def hotswap_model(ctx, character: str, channel: discord.Option(discord.TextChannel, description="The channel with the AI thread"), model_name: str):
+    if channel.id in AI_THREADS and character in AI_THREADS[channel.id]:
+        if model_name in AI_MODELS:
+            AI_THREADS[channel.id][character]['model'] = model_name
+            await ctx.respond(f"Model for {character} in channel {channel.name} changed to '{model_name}'")
+        else:
+            await ctx.respond(f"Model '{model_name}' not found. Use /list_models to see available models.")
+    else:
+        await ctx.respond(f"No AI thread for {character} is running in channel {channel.name}.")
 # Slash command to list all running AI threads in a channel
 @bot.slash_command(name="list_running_ais", description="List all running AI threads in a channel")
 async def list_running_ais(ctx, channel: discord.Option(discord.TextChannel, description="The channel to list running AIs in")):
@@ -594,6 +636,10 @@ async def aihelp(ctx):
     help_embed.add_field(name="/list_tool_packages", value="List all available tool packages", inline=False)
     help_embed.add_field(name="/aihelp", value="Show this help message", inline=False)
     help_embed.add_field(name="/toggle_crosstalk", value="Toggle crosstalk between characters", inline=False)
+    help_embed.add_field(name="/load_model", value="Load a new AI model", inline=False)
+    help_embed.add_field(name="/list_models", value="List all available AI models", inline=False)
+    help_embed.add_field(name="/set_default_model", value="Set the default AI model", inline=False)
+    help_embed.add_field(name="/hotswap_model", value="Change the AI model for an existing thread", inline=False)
     
     help_embed.set_footer(text="For more detailed information, please refer to the bot documentation.")
     
